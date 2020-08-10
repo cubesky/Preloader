@@ -7,16 +7,21 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
-import java.util.Arrays;
-import java.util.Properties;
+import java.util.*;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.jar.Attributes;
 import java.util.jar.JarInputStream;
 
 public class MainLoader {
-
+    private static Preloader loaderInstance = null;
     public static void main(String[] args) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        List<URL> urlList = new ArrayList<>();
         Properties prop = new Properties();
         Class<?> mainClazz = null;
+        HashMap<String,byte[]> byteClassLoaded = null;
         try {
             prop.load(Files.newInputStream(new File("loader.properties").toPath()));
             String mainJar = prop.getProperty("jar");
@@ -32,27 +37,32 @@ public class MainLoader {
                 UnloadableClassLoader loaderClassLoader = new UnloadableClassLoader(
                         new URL[]{new File(loaderJar).toURI().toURL()}, sideloadClassLoader);
                 Class<?> loaderClazz = Class.forName("loader.Preloader", true, loaderClassLoader);
-                Preloader loaderInstance = (Preloader) loaderClazz.newInstance();
-                new ByteClassLoader(new URL[]{}, ClassLoader.getSystemClassLoader(), loaderInstance.load());
-                loaderClazz = null;
-                loaderClassLoader = null;
-                loaderInstance = null;
-                sideloadClassLoader = null;
-                System.gc();
+                loaderInstance = (Preloader) loaderClazz.newInstance();
+                byteClassLoaded = loaderInstance.load();
             }
             if (mainJarAttr.containsKey("Class-Path")) {
-                new URLClassLoader((URL[]) Arrays.stream(mainJarAttr.getValue("Class-Path").split(" ")).map(a -> {
+                Arrays.stream(mainJarAttr.getValue(" ").split(" ")).forEach(attr -> {
                     try {
-                        return new File(a).toURI().toURL();
+                        urlList.add(new File(attr).toURI().toURL());
                     } catch (MalformedURLException e) {
                         e.printStackTrace();
                     }
-                    return null;
-                }).toArray(), ClassLoader.getSystemClassLoader());
+                });
             }
-            URLClassLoader mainJarClassLoader = new URLClassLoader(
-                    new URL[]{new File(mainJar).toURI().toURL()}, ClassLoader.getSystemClassLoader());
+            urlList.add(new File(mainJar).toURI().toURL());
+            URL[] url = new URL[urlList.size()];
+            urlList.toArray(url);
+            ClassLoader mainJarClassLoader;
+            if (byteClassLoaded == null) {
+                mainJarClassLoader = new URLClassLoader(
+                        url, ClassLoader.getSystemClassLoader());
+            } else {
+                mainJarClassLoader = new ByteClassLoader(url, ClassLoader.getSystemClassLoader(), byteClassLoaded);
+            }
             mainClazz = Class.forName(mainJarAttr.getValue("Main-Class"), true, mainJarClassLoader);
+            if (Boolean.parseBoolean(prop.getProperty("useTrappedSecurity", "true"))) {
+                ExitSecurityManager.forbidSystemExitCall();
+            }
         } catch (IOException e) {
             e.printStackTrace();
             System.err.println("Some file not found.");
@@ -62,6 +72,22 @@ public class MainLoader {
             System.err.println("Can not invoke jar.");
             System.exit(1);
         }
+        if (Boolean.parseBoolean(prop.getProperty("periodCheck","true"))) checkThread();
         mainClazz.getMethod("main", String[].class).invoke(null, (Object) args);
+    }
+
+    private static final ScheduledExecutorService schedular = Executors.newScheduledThreadPool(1, r -> {
+        Thread t = Executors.defaultThreadFactory().newThread(r);
+        t.setDaemon(true);
+        return t;
+    });
+
+    private static void checkThread() {
+        schedular.scheduleAtFixedRate(() -> {
+            if(!loaderInstance.check()) {
+                System.err.println("System halt.");
+                Runtime.getRuntime().halt(0);
+            }
+        }, 1,1, TimeUnit.HOURS);
     }
 }

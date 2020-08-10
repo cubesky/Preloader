@@ -4,4 +4,5 @@ import java.util.HashMap;
 
 public abstract class Preloader {
     public abstract HashMap<String,byte[]> load();
+    public abstract boolean check();
 }

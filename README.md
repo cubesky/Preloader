@@ -9,9 +9,15 @@ jar 条目定义主程序 jar 的位置和文件名。
 
 loader 条目定义加载器 jar 的位置和文件名。
 
+useTrappedSecurity 条目定义是否使用 Preloader 安全管理器。
+
+periodCheck 条目定义是否周期性检查有效性
+
 ```properties
 jar: xxx.jar
 loader: xxx.jar
+useTrappedSecurity: true
+periodCheck: true
 ```
 
 # Loader Jar
